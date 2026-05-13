@@ -1,52 +1,132 @@
-# HNG Stage 5 — React Native Starter
+# HNG Stage 5 — React Native Chat App
 
-Intentionally rough chat-app baseline. Improve this. Do not rebuild it.
+A full-featured real-time chat app built on the HNG Stage 5 starter (Expo SDK 55, TypeScript, Firebase).
+
+## Features
+
+| Feature | Details |
+|---------|---------|
+| **Auth** | Email/password sign-in & sign-up; user profile written to Firestore on registration |
+| **New chat** | Search users by name or email; reuses existing 1-to-1 conversation or creates one |
+| **Typing indicator** | Animated three-dot bounce, real-time via Firestore |
+| **Read receipts** | ✓ sending → ✓✓ sent → ✓✓ seen (blue), per-message, real-time |
+| **Emoji reactions** | Long-press any message → bottom sheet picker (6 emoji); pill counts below bubble; toggle off |
+| **Edit messages** | Long-press → Edit → inline text input in bubble → "Edited" label |
+| **Delete messages** | Delete for me (local only) or delete for everyone (server-enforced ownership) |
+| **Audio messages** | Hold mic button to record; release to upload and send; playback with 1× / 2× speed toggle and progress bar |
+| **Image messages** | Gallery picker; client-side compression (max 1200 px, 0.7 quality); tap thumbnail → fullscreen |
+| **Video messages** | Gallery picker; 50 MB guard; auto-generated thumbnail; tap → fullscreen with native controls |
+| **In-chat search** | Header icon toggles search bar; debounced filter; matched substring highlighted in yellow; loading spinner + no-results state |
+| **Offline queue** | Text messages enqueued in AsyncStorage; delivered on reconnect / foreground |
+| **State management** | Zustand (authStore, chatStore, conversationsStore) — no setState pyramids |
+| **Loading / error / empty** | Every async screen has all three states |
 
 ## Setup
 
 ```bash
 pnpm install
 cp .env.example .env
-# fill in Firebase config in .env
+# fill in your Firebase config values in .env
 pnpm start
 ```
 
-Open on iOS Simulator, Android Emulator, or Expo Go on device.
+Open on iOS Simulator, Android Emulator, or a development build on device.
 
-### Expo Go caveat (SDK 55)
-
-The Expo Go versions on the App Store and Google Play may lag behind SDK 55 releases. See [expo/expo#43699](https://github.com/expo/expo/issues/43699).
-
-- **Android** — run `pnpm start` then choose "Open on Android" from the dev menu. This downloads the latest Expo Go build directly to the device, bypassing the Play Store version.
-- **iOS** — use the Expo Go TestFlight build (SDK 55 compatible) instead of the App Store version.
-- **Recommended** — use a development build to avoid Expo Go version constraints entirely.
+> **Expo Go caveat (SDK 55):** The Play Store / App Store Expo Go builds may lag behind SDK 55. Use the Expo Go TestFlight build on iOS, or let `pnpm start` download the latest Android build directly. A development build avoids this entirely.
 
 ## Firebase setup
 
-1. Create a project at https://console.firebase.google.com.
+1. Create a project at <https://console.firebase.google.com>.
 2. Enable **Email/Password** in Authentication → Sign-in method.
-3. Create a **Firestore Database** (production mode is fine — paste `firestore.rules` into the Rules tab).
-4. Create a **Storage bucket** (default settings).
-5. In Project settings → General → Your apps, add a Web app and copy the config keys into `.env` (the `EXPO_PUBLIC_FIREBASE_*` variables).
+3. Create a **Firestore Database** — paste the contents of `firestore.rules` into the Rules tab.
+4. Create a **Storage bucket** and set its rules to:
+   ```
+   rules_version = '2';
+   service firebase.storage {
+     match /b/{bucket}/o {
+       match /{allPaths=**} {
+         allow read, write: if request.auth != null;
+       }
+     }
+   }
+   ```
+5. In Project settings → Your apps, add a **Web app** and copy the config keys into `.env`.
 
-## What's missing — your job to add
+## Firestore data model
 
-The starter intentionally ships rough. You are graded on closing these gaps:
+```
+users/{uid}
+  displayName, email, createdAt
 
-1. No loading spinners anywhere.
-2. No error toasts or alerts — errors crash or silently fail.
-3. No empty states — empty lists show a blank screen.
-4. No keyboard-avoiding behavior on the chat input.
-5. No FlatList autoscroll on new messages.
-6. No auth route guard — anyone can deep-link to `/chats` while logged out.
-7. All `useState`/`useEffect` live in screens — no custom hooks, no state library.
-8. Firestore listeners set up directly in screen `useEffect` blocks.
-9. No input validation on login/signup.
-10. No `try/catch` around any Firestore or Auth call.
-11. No offline persistence enabled.
-12. No user profile creation — `users/{uid}` doc is never written.
-13. No way to start a new conversation — you must build this yourself.
+conversations/{id}
+  participants[]        — UIDs
+  participantNames{}    — uid → displayName
+  lastMessage           — string preview
+  lastMessageAt         — Timestamp
+  typingUsers{}         — uid → boolean
 
-## Stage 5 brief
+conversations/{id}/messages/{msgId}
+  senderId, type (text|audio|image|video)
+  text?, mediaUrl?, mediaThumbnail?, duration?
+  createdAt, editedAt?
+  reactions{}           — uid → emoji
+  readBy{}              — uid → Timestamp
+  deletedFor[]          — UIDs (delete-for-me)
+  deletedForEveryone?   — boolean
+```
 
-See the main Stage 5 brief for grading criteria and submission instructions.
+## Scripts
+
+```bash
+pnpm start          # start Expo dev server
+pnpm android        # open on Android emulator
+pnpm ios            # open on iOS simulator
+pnpm typecheck      # tsc --noEmit
+pnpm lint           # eslint --max-warnings 0
+pnpm format         # prettier --write
+```
+
+## Project structure
+
+```
+src/
+  app/
+    _layout.tsx           root layout (GestureHandlerRootView, auth init)
+    index.tsx             auth router
+    login.tsx             sign-in / sign-up
+    chats/
+      index.tsx           conversation list
+      new.tsx             new chat (user search)
+      [id].tsx            chat room (all features)
+  stores/
+    authStore.ts
+    chatStore.ts
+    conversationsStore.ts
+  hooks/
+    useConversations.ts
+    useMessages.ts
+  components/
+    chat/
+      AudioMessage.tsx
+      EmojiReactionPicker.tsx   (superseded by MessageActionSheet)
+      MediaMessage.tsx
+      MessageActionSheet.tsx
+      MessageSearchBar.tsx
+      ReadReceipt.tsx
+      TypingIndicator.tsx
+    ui/
+      EmptyState.tsx
+      ErrorState.tsx
+      LoadingState.tsx
+  types/
+    conversation.ts
+    message.ts
+    user.ts
+  utils/
+    audioRecorder.ts
+    mediaCompression.ts
+    offlineQueue.ts
+  firebase.ts
+```
+
+See [STACK.md](STACK.md) for package choices and technical decisions.
