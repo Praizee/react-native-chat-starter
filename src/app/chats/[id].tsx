@@ -23,6 +23,8 @@ import {
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
+import * as ImagePicker from 'expo-image-picker';
+import { getThumbnailAsync } from 'expo-video-thumbnails';
 import { auth, db, storage } from '@/firebase';
 import { useMessages } from '@/hooks/useMessages';
 import { useChatStore } from '@/stores/chatStore';
@@ -35,7 +37,9 @@ import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { ReadReceipt, getReceiptStatus } from '@/components/chat/ReadReceipt';
 import { MessageActionSheet } from '@/components/chat/MessageActionSheet';
 import { AudioMessage } from '@/components/chat/AudioMessage';
+import { MediaMessage } from '@/components/chat/MediaMessage';
 import { Message } from '@/types/message';
+import { compressImage } from '@/utils/mediaCompression';
 import { requestAudioPermission } from '@/utils/audioRecorder';
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -69,6 +73,9 @@ export default function ChatRoom() {
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [isRecording, setIsRecording] = useState(false);
   const [sendingAudio, setSendingAudio] = useState(false);
+
+  // Media
+  const [sendingMedia, setSendingMedia] = useState(false);
 
   const otherName = (() => {
     if (!conversation?.participantNames || !currentUid) return 'Chat';
@@ -173,6 +180,86 @@ export default function ChatRoom() {
       lastMessage: '🎤 Voice message',
       lastMessageAt: serverTimestamp(),
     });
+  };
+
+  // ── Media pick & send ─────────────────────────────────────────────────────
+  const pickAndSendMedia = async () => {
+    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!granted) {
+      Alert.alert('Permission needed', 'Gallery access is required to send media.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      quality: 1,
+      allowsEditing: false,
+    });
+
+    if (result.canceled || !result.assets?.length || !currentUid || !id) return;
+    const asset = result.assets[0];
+
+    setSendingMedia(true);
+    try {
+      const msgRef = doc(collection(db, 'conversations', id, 'messages'));
+
+      if (asset.type === 'image') {
+        const compressed = await compressImage(asset.uri);
+        const blob = await fetch(compressed).then((r) => r.blob());
+        const storageRef = ref(storage, `images/${id}/${msgRef.id}.jpg`);
+        await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
+        const mediaUrl = await getDownloadURL(storageRef);
+
+        await addDoc(collection(db, 'conversations', id, 'messages'), {
+          senderId: currentUid,
+          type: 'image',
+          mediaUrl,
+          createdAt: serverTimestamp(),
+          readBy: { [currentUid]: serverTimestamp() },
+        });
+        await updateDoc(doc(db, 'conversations', id), {
+          lastMessage: '📷 Photo',
+          lastMessageAt: serverTimestamp(),
+        });
+      } else {
+        // Video — enforce 50 MB limit
+        const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+        if (asset.fileSize && asset.fileSize > MAX_VIDEO_BYTES) {
+          Alert.alert('File too large', 'Videos must be under 50 MB.');
+          return;
+        }
+
+        // Generate thumbnail
+        const { uri: thumbUri } = await getThumbnailAsync(asset.uri, { time: 0 });
+        const thumbBlob = await fetch(thumbUri).then((r) => r.blob());
+        const thumbRef = ref(storage, `videos/${id}/${msgRef.id}_thumb.jpg`);
+        await uploadBytes(thumbRef, thumbBlob, { contentType: 'image/jpeg' });
+        const mediaThumbnail = await getDownloadURL(thumbRef);
+
+        // Upload video
+        const videoBlob = await fetch(asset.uri).then((r) => r.blob());
+        const videoRef = ref(storage, `videos/${id}/${msgRef.id}.mp4`);
+        await uploadBytes(videoRef, videoBlob, { contentType: 'video/mp4' });
+        const mediaUrl = await getDownloadURL(videoRef);
+
+        await addDoc(collection(db, 'conversations', id, 'messages'), {
+          senderId: currentUid,
+          type: 'video',
+          mediaUrl,
+          mediaThumbnail,
+          createdAt: serverTimestamp(),
+          readBy: { [currentUid]: serverTimestamp() },
+        });
+        await updateDoc(doc(db, 'conversations', id), {
+          lastMessage: '🎥 Video',
+          lastMessageAt: serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      Alert.alert('Upload failed', e instanceof Error ? e.message : 'Please try again.');
+    } finally {
+      setSendingMedia(false);
+    }
   };
 
   // ── Reactions ─────────────────────────────────────────────────────────────
@@ -317,6 +404,12 @@ export default function ChatRoom() {
                       duration={item.duration ?? 0}
                       isMine={mine}
                     />
+                  ) : (item.type === 'image' || item.type === 'video') && item.mediaUrl ? (
+                    <MediaMessage
+                      type={item.type}
+                      mediaUrl={item.mediaUrl}
+                      mediaThumbnail={item.mediaThumbnail}
+                    />
                   ) : (
                     <>
                       <Text style={mine ? styles.textMine : styles.textTheirs}>
@@ -371,6 +464,18 @@ export default function ChatRoom() {
 
       {/* Composer */}
       <View style={styles.composer}>
+        <TouchableOpacity
+          style={styles.attachButton}
+          onPress={pickAndSendMedia}
+          disabled={sendingMedia}
+        >
+          {sendingMedia ? (
+            <ActivityIndicator color="#222" size="small" />
+          ) : (
+            <Text style={styles.attachIcon}>📎</Text>
+          )}
+        </TouchableOpacity>
+
         <TextInput
           style={styles.input}
           placeholder="Message"
@@ -496,6 +601,13 @@ const styles = StyleSheet.create({
     borderColor: '#eee',
     alignItems: 'flex-end',
   },
+  attachButton: {
+    width: 38,
+    height: 38,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  attachIcon: { fontSize: 22 },
   input: {
     flex: 1,
     borderWidth: 1,

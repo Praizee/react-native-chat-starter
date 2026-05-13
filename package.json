@@ -37,6 +37,7 @@
     "expo-status-bar": "~55.0.5",
     "expo-system-ui": "~55.0.16",
     "expo-video": "^55.0.16",
+    "expo-video-thumbnails": "^56.0.3",
     "firebase": "^11.1.0",
     "react": "19.2.0",
     "react-native": "0.83.6",
