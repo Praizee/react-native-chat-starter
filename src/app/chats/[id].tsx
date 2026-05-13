@@ -25,6 +25,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { Message } from '@/types/message';
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -33,7 +34,11 @@ export default function ChatRoom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   useMessages(id);
 
-  const { messages, loading, error } = useChatStore();
+  const { messages, loading, error, typingUsers } = useChatStore();
+
+  const someoneElseIsTyping = Object.entries(typingUsers).some(
+    ([uid, isTyping]) => uid !== currentUid && isTyping,
+  );
   const currentUid = useAuthStore((s) => s.user?.uid);
 
   const conversation = useConversationsStore((s) =>
@@ -149,6 +154,9 @@ export default function ChatRoom() {
           }}
         />
       )}
+
+      {/* Typing indicator */}
+      {someoneElseIsTyping && <TypingIndicator />}
 
       {/* Composer */}
       <View style={styles.composer}>
