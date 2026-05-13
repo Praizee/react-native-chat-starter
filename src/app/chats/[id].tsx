@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -41,6 +42,12 @@ import { MediaMessage } from '@/components/chat/MediaMessage';
 import { MessageSearchBar, splitHighlight } from '@/components/chat/MessageSearchBar';
 import { Message } from '@/types/message';
 import { compressImage } from '@/utils/mediaCompression';
+import {
+  dequeueMessage,
+  enqueueMessage,
+  flushQueue,
+  QueuedMessage,
+} from '@/utils/offlineQueue';
 import { requestAudioPermission } from '@/utils/audioRecorder';
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -109,6 +116,23 @@ export default function ChatRoom() {
   };
 
   // ── Send text ─────────────────────────────────────────────────────────────
+  const sendToFirestore = useCallback(
+    async (msg: QueuedMessage) => {
+      await addDoc(collection(db, 'conversations', msg.conversationId, 'messages'), {
+        senderId: msg.senderId,
+        type: 'text',
+        text: msg.text,
+        createdAt: serverTimestamp(),
+        readBy: { [msg.senderId]: serverTimestamp() },
+      });
+      await updateDoc(doc(db, 'conversations', msg.conversationId), {
+        lastMessage: msg.text,
+        lastMessageAt: serverTimestamp(),
+      });
+    },
+    [],
+  );
+
   const send = async () => {
     if (!currentUid || !id || !text.trim()) return;
     const body = text.trim();
@@ -116,18 +140,34 @@ export default function ChatRoom() {
     if (typingTimer) clearTimeout(typingTimer);
     setTyping(false);
 
-    await addDoc(collection(db, 'conversations', id, 'messages'), {
+    const queued: QueuedMessage = {
+      localId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      conversationId: id,
       senderId: currentUid,
-      type: 'text',
       text: body,
-      createdAt: serverTimestamp(),
-      readBy: { [currentUid]: serverTimestamp() },
-    });
-    await updateDoc(doc(db, 'conversations', id), {
-      lastMessage: body,
-      lastMessageAt: serverTimestamp(),
-    });
+      queuedAt: Date.now(),
+    };
+
+    await enqueueMessage(queued);
+    try {
+      await sendToFirestore(queued);
+      await dequeueMessage(queued.localId);
+    } catch {
+      // message stays in queue; will be flushed on next foreground event
+    }
   };
+
+  // ── Flush queue on foreground ─────────────────────────────────────────────
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        flushQueue(sendToFirestore).catch(() => {});
+      }
+    });
+    // also flush immediately on mount in case there are stale items
+    flushQueue(sendToFirestore).catch(() => {});
+    return () => sub.remove();
+  }, [sendToFirestore]);
 
   // ── Audio record ──────────────────────────────────────────────────────────
   const onMicPressIn = async () => {
