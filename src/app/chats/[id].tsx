@@ -27,6 +27,7 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { ReadReceipt, getReceiptStatus } from '@/components/chat/ReadReceipt';
+import { EmojiReactionPicker } from '@/components/chat/EmojiReactionPicker';
 import { Message } from '@/types/message';
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -35,18 +36,18 @@ export default function ChatRoom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   useMessages(id);
 
-  const { messages, loading, error, typingUsers } = useChatStore();
-
-  const someoneElseIsTyping = Object.entries(typingUsers).some(
-    ([uid, isTyping]) => uid !== currentUid && isTyping,
-  );
   const currentUid = useAuthStore((s) => s.user?.uid);
-
+  const { messages, loading, error, typingUsers } = useChatStore();
   const conversation = useConversationsStore((s) =>
     s.conversations.find((c) => c.id === id),
   );
 
+  const someoneElseIsTyping = Object.entries(typingUsers).some(
+    ([uid, isTyping]) => uid !== currentUid && isTyping,
+  );
+
   const [text, setText] = useState('');
+  const [pickerTarget, setPickerTarget] = useState<Message | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
 
   const otherName = (() => {
@@ -92,6 +93,28 @@ export default function ChatRoom() {
     });
   };
 
+  const reactToMessage = async (msg: Message, emoji: string) => {
+    setPickerTarget(null);
+    if (!id) return;
+    const existing = msg.reactions?.[currentUid ?? ''];
+    // toggle off if same emoji, otherwise set new one
+    const value = existing === emoji ? null : emoji;
+    const update = value === null
+      ? { [`reactions.${currentUid}`]: null }
+      : { [`reactions.${currentUid}`]: emoji };
+    await updateDoc(doc(db, 'conversations', id, 'messages', msg.id), update).catch(() => {});
+  };
+
+  // Tally reactions: { emoji → count }
+  const tallyReactions = (reactions?: Record<string, string>) => {
+    if (!reactions) return [];
+    const counts: Record<string, number> = {};
+    for (const emoji of Object.values(reactions)) {
+      if (emoji) counts[emoji] = (counts[emoji] ?? 0) + 1;
+    }
+    return Object.entries(counts);
+  };
+
   const visibleMessages = messages.filter(
     (m) =>
       !m.deletedForEveryone &&
@@ -105,7 +128,6 @@ export default function ChatRoom() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       {/* Header */}
       <View style={styles.header}>
@@ -140,26 +162,53 @@ export default function ChatRoom() {
             const receipt = mine
               ? getReceiptStatus(item.readBy, currentUid ?? '', participants)
               : null;
+            const reactionTally = tallyReactions(item.reactions);
+
             return (
-              <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                {deleted ? (
-                  <Text style={styles.deletedText}>This message was deleted</Text>
-                ) : (
-                  <>
-                    <Text style={mine ? styles.textMine : styles.textTheirs}>
-                      {item.text}
-                    </Text>
-                    {item.editedAt && (
-                      <Text style={styles.editedLabel}>Edited</Text>
-                    )}
-                  </>
-                )}
-                {mine && receipt && (
-                  <View style={styles.receiptRow}>
-                    <ReadReceipt status={receipt} />
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onLongPress={() => !deleted && setPickerTarget(item)}
+                delayLongPress={300}
+              >
+                <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+                  {deleted ? (
+                    <Text style={styles.deletedText}>This message was deleted</Text>
+                  ) : (
+                    <>
+                      <Text style={mine ? styles.textMine : styles.textTheirs}>
+                        {item.text}
+                      </Text>
+                      {item.editedAt && (
+                        <Text style={styles.editedLabel}>Edited</Text>
+                      )}
+                    </>
+                  )}
+                  {mine && receipt && (
+                    <View style={styles.receiptRow}>
+                      <ReadReceipt status={receipt} />
+                    </View>
+                  )}
+                </View>
+
+                {/* Reaction pills */}
+                {reactionTally.length > 0 && (
+                  <View style={[styles.reactionRow, mine ? styles.reactionRowMine : styles.reactionRowTheirs]}>
+                    {reactionTally.map(([emoji, count]) => (
+                      <TouchableOpacity
+                        key={emoji}
+                        style={[
+                          styles.reactionPill,
+                          item.reactions?.[currentUid ?? ''] === emoji && styles.reactionPillActive,
+                        ]}
+                        onPress={() => reactToMessage(item, emoji)}
+                      >
+                        <Text style={styles.reactionEmoji}>{emoji}</Text>
+                        {count > 1 && <Text style={styles.reactionCount}>{count}</Text>}
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 )}
-              </View>
+              </TouchableOpacity>
             );
           }}
         />
@@ -187,6 +236,14 @@ export default function ChatRoom() {
           <Text style={styles.sendText}>Send</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Emoji reaction picker */}
+      <EmojiReactionPicker
+        visible={pickerTarget !== null}
+        currentReaction={pickerTarget?.reactions?.[currentUid ?? '']}
+        onSelect={(emoji) => pickerTarget && reactToMessage(pickerTarget, emoji)}
+        onClose={() => setPickerTarget(null)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -223,6 +280,23 @@ const styles = StyleSheet.create({
   deletedText: { color: '#aaa', fontStyle: 'italic', fontSize: 14 },
   editedLabel: { color: '#aaa', fontSize: 11, marginTop: 2 },
   receiptRow: { alignItems: 'flex-end', marginTop: 2 },
+  reactionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4, maxWidth: '75%' },
+  reactionRowMine: { alignSelf: 'flex-end' },
+  reactionRowTheirs: { alignSelf: 'flex-start' },
+  reactionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 12,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    gap: 3,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  reactionPillActive: { borderColor: '#ffc107', backgroundColor: '#fff8e1' },
+  reactionEmoji: { fontSize: 14 },
+  reactionCount: { fontSize: 12, color: '#555', fontWeight: '600' },
   composer: {
     flexDirection: 'row',
     padding: 12,
