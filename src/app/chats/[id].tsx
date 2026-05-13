@@ -38,6 +38,7 @@ import { ReadReceipt, getReceiptStatus } from '@/components/chat/ReadReceipt';
 import { MessageActionSheet } from '@/components/chat/MessageActionSheet';
 import { AudioMessage } from '@/components/chat/AudioMessage';
 import { MediaMessage } from '@/components/chat/MediaMessage';
+import { MessageSearchBar, splitHighlight } from '@/components/chat/MessageSearchBar';
 import { Message } from '@/types/message';
 import { compressImage } from '@/utils/mediaCompression';
 import { requestAudioPermission } from '@/utils/audioRecorder';
@@ -76,6 +77,12 @@ export default function ChatRoom() {
 
   // Media
   const [sendingMedia, setSendingMedia] = useState(false);
+
+  // Search
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const otherName = (() => {
     if (!conversation?.participantNames || !currentUid) return 'Chat';
@@ -180,6 +187,24 @@ export default function ChatRoom() {
       lastMessage: '🎤 Voice message',
       lastMessageAt: serverTimestamp(),
     });
+  };
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  const onSearchChange = (text: string) => {
+    setSearchQuery(text);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (text.trim()) {
+      setSearching(true);
+      searchTimerRef.current = setTimeout(() => setSearching(false), 300);
+    } else {
+      setSearching(false);
+    }
+  };
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearching(false);
   };
 
   // ── Media pick & send ─────────────────────────────────────────────────────
@@ -321,11 +346,15 @@ export default function ChatRoom() {
   };
 
   // ── Visible messages ──────────────────────────────────────────────────────
-  const visibleMessages = messages.filter(
-    (m) =>
-      !m.deletedForEveryone &&
-      !(m.deletedFor?.includes(currentUid ?? '')),
-  );
+  const activeQuery = searching ? '' : searchQuery.trim().toLowerCase();
+
+  const visibleMessages = messages.filter((m) => {
+    if (m.deletedForEveryone || m.deletedFor?.includes(currentUid ?? '')) return false;
+    if (activeQuery && m.type === 'text') {
+      return (m.text ?? '').toLowerCase().includes(activeQuery);
+    }
+    return true;
+  });
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={() => router.replace(`/chats/${id}`)} />;
@@ -344,11 +373,29 @@ export default function ChatRoom() {
           <Text style={styles.headerAvatarText}>{otherName[0]?.toUpperCase()}</Text>
         </View>
         <Text style={styles.headerName}>{otherName}</Text>
+        <TouchableOpacity onPress={() => setSearchOpen((v) => !v)}>
+          <Text style={styles.searchIcon}>🔍</Text>
+        </TouchableOpacity>
       </View>
+
+      {searchOpen && (
+        <MessageSearchBar
+          value={searchQuery}
+          searching={searching}
+          onChange={onSearchChange}
+          onClose={closeSearch}
+        />
+      )}
 
       {/* Messages */}
       {visibleMessages.length === 0 ? (
-        <EmptyState message="No messages yet. Say hi!" />
+        <EmptyState
+          message={
+            activeQuery
+              ? `No results for "${searchQuery.trim()}"`
+              : 'No messages yet. Say hi!'
+          }
+        />
       ) : (
         <FlatList
           ref={flatListRef}
@@ -410,16 +457,29 @@ export default function ChatRoom() {
                       mediaUrl={item.mediaUrl}
                       mediaThumbnail={item.mediaThumbnail}
                     />
-                  ) : (
-                    <>
-                      <Text style={mine ? styles.textMine : styles.textTheirs}>
-                        {item.text}
-                      </Text>
-                      {item.editedAt && (
-                        <Text style={styles.editedLabel}>Edited</Text>
-                      )}
-                    </>
-                  )}
+                  ) : (() => {
+                    const segments = activeQuery
+                      ? splitHighlight(item.text ?? '', activeQuery)
+                      : null;
+                    return (
+                      <>
+                        {segments ? (
+                          <Text style={mine ? styles.textMine : styles.textTheirs}>
+                            {segments[0]}
+                            <Text style={styles.highlight}>{segments[1]}</Text>
+                            {segments[2]}
+                          </Text>
+                        ) : (
+                          <Text style={mine ? styles.textMine : styles.textTheirs}>
+                            {item.text}
+                          </Text>
+                        )}
+                        {item.editedAt && (
+                          <Text style={styles.editedLabel}>Edited</Text>
+                        )}
+                      </>
+                    );
+                  })()}
                   {mine && receipt && !isEditing && (
                     <View style={styles.receiptRow}>
                       <ReadReceipt status={receipt} />
@@ -549,6 +609,7 @@ const styles = StyleSheet.create({
   },
   headerAvatarText: { color: '#fff', fontWeight: '700' },
   headerName: { fontWeight: '600', fontSize: 17, flex: 1 },
+  searchIcon: { fontSize: 20, paddingLeft: 4 },
   list: { padding: 12, gap: 6, paddingBottom: 8 },
   bubble: { padding: 10, borderRadius: 16, maxWidth: '75%' },
   bubbleMine: { alignSelf: 'flex-end', backgroundColor: '#222' },
@@ -557,6 +618,7 @@ const styles = StyleSheet.create({
   textTheirs: { color: '#111', fontSize: 15 },
   deletedText: { color: '#aaa', fontStyle: 'italic', fontSize: 14 },
   editedLabel: { color: '#aaa', fontSize: 11, marginTop: 2 },
+  highlight: { backgroundColor: '#ffe082', color: '#000', borderRadius: 2 },
   receiptRow: { alignItems: 'flex-end', marginTop: 2 },
   editContainer: { gap: 8 },
   editInput: {
