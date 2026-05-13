@@ -26,6 +26,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
+import { ReadReceipt, getReceiptStatus } from '@/components/chat/ReadReceipt';
 import { Message } from '@/types/message';
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -135,6 +136,10 @@ export default function ChatRoom() {
           renderItem={({ item }) => {
             const mine = item.senderId === currentUid;
             const deleted = item.deletedForEveryone;
+            const participants = conversation?.participants ?? [];
+            const receipt = mine
+              ? getReceiptStatus(item.readBy, currentUid ?? '', participants)
+              : null;
             return (
               <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
                 {deleted ? (
@@ -148,6 +153,11 @@ export default function ChatRoom() {
                       <Text style={styles.editedLabel}>Edited</Text>
                     )}
                   </>
+                )}
+                {mine && receipt && (
+                  <View style={styles.receiptRow}>
+                    <ReadReceipt status={receipt} />
+                  </View>
                 )}
               </View>
             );
@@ -212,6 +222,7 @@ const styles = StyleSheet.create({
   textTheirs: { color: '#111', fontSize: 15 },
   deletedText: { color: '#aaa', fontStyle: 'italic', fontSize: 14 },
   editedLabel: { color: '#aaa', fontSize: 11, marginTop: 2 },
+  receiptRow: { alignItems: 'flex-end', marginTop: 2 },
   composer: {
     flexDirection: 'row',
     padding: 12,
