@@ -1,8 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -18,7 +21,9 @@ import {
   serverTimestamp,
   updateDoc,
 } from 'firebase/firestore';
-import { auth, db } from '@/firebase';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
+import { auth, db, storage } from '@/firebase';
 import { useMessages } from '@/hooks/useMessages';
 import { useChatStore } from '@/stores/chatStore';
 import { useConversationsStore } from '@/stores/conversationsStore';
@@ -29,7 +34,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { ReadReceipt, getReceiptStatus } from '@/components/chat/ReadReceipt';
 import { MessageActionSheet } from '@/components/chat/MessageActionSheet';
+import { AudioMessage } from '@/components/chat/AudioMessage';
 import { Message } from '@/types/message';
+import { requestAudioPermission } from '@/utils/audioRecorder';
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -58,12 +65,18 @@ export default function ChatRoom() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
+  // Audio recording
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const [isRecording, setIsRecording] = useState(false);
+  const [sendingAudio, setSendingAudio] = useState(false);
+
   const otherName = (() => {
     if (!conversation?.participantNames || !currentUid) return 'Chat';
     const otherUid = conversation.participants?.find((u) => u !== currentUid);
     return otherUid ? (conversation.participantNames[otherUid] ?? 'Chat') : 'Chat';
   })();
 
+  // ── Typing ────────────────────────────────────────────────────────────────
   const setTyping = useCallback(
     async (isTyping: boolean) => {
       if (!currentUid || !id) return;
@@ -81,6 +94,7 @@ export default function ChatRoom() {
     typingTimer = setTimeout(() => setTyping(false), 2000);
   };
 
+  // ── Send text ─────────────────────────────────────────────────────────────
   const send = async () => {
     if (!currentUid || !id || !text.trim()) return;
     const body = text.trim();
@@ -101,14 +115,73 @@ export default function ChatRoom() {
     });
   };
 
-  // ── Reactions ────────────────────────────────────────────────────────────
+  // ── Audio record ──────────────────────────────────────────────────────────
+  const onMicPressIn = async () => {
+    const granted = await requestAudioPermission();
+    if (!granted) {
+      Alert.alert('Permission needed', 'Microphone access is required to record audio.');
+      return;
+    }
+    try {
+      await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+      audioRecorder.record();
+      setIsRecording(true);
+    } catch {
+      Alert.alert('Error', 'Could not start recording.');
+    }
+  };
+
+  const onMicPressOut = async () => {
+    if (!isRecording) return;
+    setIsRecording(false);
+    setSendingAudio(true);
+    try {
+      await audioRecorder.stop();
+      await AudioModule.setAudioModeAsync({ allowsRecording: false });
+      const uri = audioRecorder.uri;
+      const duration = Math.round((audioRecorder.currentTime ?? 0));
+      if (!uri || duration < 1) return;
+
+      await sendAudioMessage(uri, duration);
+    } catch {
+      Alert.alert('Error', 'Could not send audio message.');
+    } finally {
+      setSendingAudio(false);
+    }
+  };
+
+  const sendAudioMessage = async (localUri: string, duration: number) => {
+    if (!currentUid || !id) return;
+
+    const msgRef = doc(collection(db, 'conversations', id, 'messages'));
+    const storageRef = ref(storage, `audio/${id}/${msgRef.id}.m4a`);
+
+    const blob = await fetch(localUri).then((r) => r.blob());
+    await uploadBytes(storageRef, blob, { contentType: 'audio/m4a' });
+    const mediaUrl = await getDownloadURL(storageRef);
+
+    await addDoc(collection(db, 'conversations', id, 'messages'), {
+      senderId: currentUid,
+      type: 'audio',
+      mediaUrl,
+      duration,
+      createdAt: serverTimestamp(),
+      readBy: { [currentUid]: serverTimestamp() },
+    });
+    await updateDoc(doc(db, 'conversations', id), {
+      lastMessage: '🎤 Voice message',
+      lastMessageAt: serverTimestamp(),
+    });
+  };
+
+  // ── Reactions ─────────────────────────────────────────────────────────────
   const reactToMessage = async (msg: Message, emoji: string) => {
     setSheetTarget(null);
     if (!id || !currentUid) return;
     const existing = msg.reactions?.[currentUid];
-    const value = existing === emoji ? null : emoji;
     await updateDoc(doc(db, 'conversations', id, 'messages', msg.id), {
-      [`reactions.${currentUid}`]: value,
+      [`reactions.${currentUid}`]: existing === emoji ? null : emoji,
     }).catch(() => {});
   };
 
@@ -121,7 +194,7 @@ export default function ChatRoom() {
     return Object.entries(counts);
   };
 
-  // ── Edit ─────────────────────────────────────────────────────────────────
+  // ── Edit ──────────────────────────────────────────────────────────────────
   const startEdit = (msg: Message) => {
     setSheetTarget(null);
     setEditingId(msg.id);
@@ -160,7 +233,7 @@ export default function ChatRoom() {
     }).catch(() => {});
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Visible messages ──────────────────────────────────────────────────────
   const visibleMessages = messages.filter(
     (m) =>
       !m.deletedForEveryone &&
@@ -238,6 +311,12 @@ export default function ChatRoom() {
                         </TouchableOpacity>
                       </View>
                     </View>
+                  ) : item.type === 'audio' && item.mediaUrl ? (
+                    <AudioMessage
+                      uri={item.mediaUrl}
+                      duration={item.duration ?? 0}
+                      isMine={mine}
+                    />
                   ) : (
                     <>
                       <Text style={mine ? styles.textMine : styles.textTheirs}>
@@ -301,16 +380,33 @@ export default function ChatRoom() {
           returnKeyType="default"
           onBlur={() => setTyping(false)}
         />
-        <TouchableOpacity
-          style={[styles.sendButton, !text.trim() && styles.sendButtonDisabled]}
-          onPress={send}
-          disabled={!text.trim()}
-        >
-          <Text style={styles.sendText}>Send</Text>
-        </TouchableOpacity>
+
+        {text.trim() ? (
+          <TouchableOpacity style={styles.sendButton} onPress={send}>
+            <Text style={styles.sendText}>Send</Text>
+          </TouchableOpacity>
+        ) : (
+          <Pressable
+            style={[styles.sendButton, isRecording && styles.sendButtonRecording]}
+            onPressIn={onMicPressIn}
+            onPressOut={onMicPressOut}
+          >
+            {sendingAudio ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.sendText}>{isRecording ? '⏹' : '🎤'}</Text>
+            )}
+          </Pressable>
+        )}
       </View>
 
-      {/* Action sheet (reactions + edit/delete) */}
+      {isRecording && (
+        <View style={styles.recordingBanner}>
+          <Text style={styles.recordingText}>● Recording… release to send</Text>
+        </View>
+      )}
+
+      {/* Action sheet */}
       <MessageActionSheet
         visible={sheetTarget !== null}
         isMine={sheetTarget?.senderId === currentUid}
@@ -414,8 +510,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: 20,
+    minWidth: 60,
   },
-  sendButtonDisabled: { opacity: 0.4 },
+  sendButtonRecording: { backgroundColor: '#d32f2f' },
   sendText: { color: '#fff', fontWeight: '600' },
+  recordingBanner: {
+    backgroundColor: '#d32f2f',
+    paddingVertical: 6,
+    alignItems: 'center',
+  },
+  recordingText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });
