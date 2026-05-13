@@ -12,6 +12,7 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   addDoc,
+  arrayUnion,
   collection,
   doc,
   serverTimestamp,
@@ -27,7 +28,7 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { ReadReceipt, getReceiptStatus } from '@/components/chat/ReadReceipt';
-import { EmojiReactionPicker } from '@/components/chat/EmojiReactionPicker';
+import { MessageActionSheet } from '@/components/chat/MessageActionSheet';
 import { Message } from '@/types/message';
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -46,9 +47,16 @@ export default function ChatRoom() {
     ([uid, isTyping]) => uid !== currentUid && isTyping,
   );
 
+  // Composer
   const [text, setText] = useState('');
-  const [pickerTarget, setPickerTarget] = useState<Message | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
+
+  // Action sheet
+  const [sheetTarget, setSheetTarget] = useState<Message | null>(null);
+
+  // Inline edit
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
 
   const otherName = (() => {
     if (!conversation?.participantNames || !currentUid) return 'Chat';
@@ -93,19 +101,17 @@ export default function ChatRoom() {
     });
   };
 
+  // ── Reactions ────────────────────────────────────────────────────────────
   const reactToMessage = async (msg: Message, emoji: string) => {
-    setPickerTarget(null);
-    if (!id) return;
-    const existing = msg.reactions?.[currentUid ?? ''];
-    // toggle off if same emoji, otherwise set new one
+    setSheetTarget(null);
+    if (!id || !currentUid) return;
+    const existing = msg.reactions?.[currentUid];
     const value = existing === emoji ? null : emoji;
-    const update = value === null
-      ? { [`reactions.${currentUid}`]: null }
-      : { [`reactions.${currentUid}`]: emoji };
-    await updateDoc(doc(db, 'conversations', id, 'messages', msg.id), update).catch(() => {});
+    await updateDoc(doc(db, 'conversations', id, 'messages', msg.id), {
+      [`reactions.${currentUid}`]: value,
+    }).catch(() => {});
   };
 
-  // Tally reactions: { emoji → count }
   const tallyReactions = (reactions?: Record<string, string>) => {
     if (!reactions) return [];
     const counts: Record<string, number> = {};
@@ -115,6 +121,46 @@ export default function ChatRoom() {
     return Object.entries(counts);
   };
 
+  // ── Edit ─────────────────────────────────────────────────────────────────
+  const startEdit = (msg: Message) => {
+    setSheetTarget(null);
+    setEditingId(msg.id);
+    setEditText(msg.text ?? '');
+  };
+
+  const confirmEdit = async () => {
+    if (!editingId || !id || !editText.trim()) return;
+    await updateDoc(doc(db, 'conversations', id, 'messages', editingId), {
+      text: editText.trim(),
+      editedAt: serverTimestamp(),
+    }).catch(() => {});
+    setEditingId(null);
+    setEditText('');
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditText('');
+  };
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+  const deleteForMe = async (msg: Message) => {
+    setSheetTarget(null);
+    if (!id || !currentUid) return;
+    await updateDoc(doc(db, 'conversations', id, 'messages', msg.id), {
+      deletedFor: arrayUnion(currentUid),
+    }).catch(() => {});
+  };
+
+  const deleteForEveryone = async (msg: Message) => {
+    setSheetTarget(null);
+    if (!id) return;
+    await updateDoc(doc(db, 'conversations', id, 'messages', msg.id), {
+      deletedForEveryone: true,
+    }).catch(() => {});
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
   const visibleMessages = messages.filter(
     (m) =>
       !m.deletedForEveryone &&
@@ -158,6 +204,7 @@ export default function ChatRoom() {
           renderItem={({ item }) => {
             const mine = item.senderId === currentUid;
             const deleted = item.deletedForEveryone;
+            const isEditing = editingId === item.id;
             const participants = conversation?.participants ?? [];
             const receipt = mine
               ? getReceiptStatus(item.readBy, currentUid ?? '', participants)
@@ -167,12 +214,30 @@ export default function ChatRoom() {
             return (
               <TouchableOpacity
                 activeOpacity={0.85}
-                onLongPress={() => !deleted && setPickerTarget(item)}
+                onLongPress={() => !deleted && setSheetTarget(item)}
                 delayLongPress={300}
               >
                 <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
                   {deleted ? (
                     <Text style={styles.deletedText}>This message was deleted</Text>
+                  ) : isEditing ? (
+                    <View style={styles.editContainer}>
+                      <TextInput
+                        style={styles.editInput}
+                        value={editText}
+                        onChangeText={setEditText}
+                        autoFocus
+                        multiline
+                      />
+                      <View style={styles.editActions}>
+                        <TouchableOpacity onPress={cancelEdit}>
+                          <Text style={styles.editCancel}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={confirmEdit}>
+                          <Text style={styles.editConfirm}>Save</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
                   ) : (
                     <>
                       <Text style={mine ? styles.textMine : styles.textTheirs}>
@@ -183,7 +248,7 @@ export default function ChatRoom() {
                       )}
                     </>
                   )}
-                  {mine && receipt && (
+                  {mine && receipt && !isEditing && (
                     <View style={styles.receiptRow}>
                       <ReadReceipt status={receipt} />
                     </View>
@@ -192,18 +257,26 @@ export default function ChatRoom() {
 
                 {/* Reaction pills */}
                 {reactionTally.length > 0 && (
-                  <View style={[styles.reactionRow, mine ? styles.reactionRowMine : styles.reactionRowTheirs]}>
+                  <View
+                    style={[
+                      styles.reactionRow,
+                      mine ? styles.reactionRowMine : styles.reactionRowTheirs,
+                    ]}
+                  >
                     {reactionTally.map(([emoji, count]) => (
                       <TouchableOpacity
                         key={emoji}
                         style={[
                           styles.reactionPill,
-                          item.reactions?.[currentUid ?? ''] === emoji && styles.reactionPillActive,
+                          item.reactions?.[currentUid ?? ''] === emoji &&
+                            styles.reactionPillActive,
                         ]}
                         onPress={() => reactToMessage(item, emoji)}
                       >
                         <Text style={styles.reactionEmoji}>{emoji}</Text>
-                        {count > 1 && <Text style={styles.reactionCount}>{count}</Text>}
+                        {count > 1 && (
+                          <Text style={styles.reactionCount}>{count}</Text>
+                        )}
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -237,12 +310,16 @@ export default function ChatRoom() {
         </TouchableOpacity>
       </View>
 
-      {/* Emoji reaction picker */}
-      <EmojiReactionPicker
-        visible={pickerTarget !== null}
-        currentReaction={pickerTarget?.reactions?.[currentUid ?? '']}
-        onSelect={(emoji) => pickerTarget && reactToMessage(pickerTarget, emoji)}
-        onClose={() => setPickerTarget(null)}
+      {/* Action sheet (reactions + edit/delete) */}
+      <MessageActionSheet
+        visible={sheetTarget !== null}
+        isMine={sheetTarget?.senderId === currentUid}
+        currentReaction={sheetTarget?.reactions?.[currentUid ?? '']}
+        onReact={(emoji) => sheetTarget && reactToMessage(sheetTarget, emoji)}
+        onEdit={() => sheetTarget && startEdit(sheetTarget)}
+        onDeleteForMe={() => sheetTarget && deleteForMe(sheetTarget)}
+        onDeleteForEveryone={() => sheetTarget && deleteForEveryone(sheetTarget)}
+        onClose={() => setSheetTarget(null)}
       />
     </KeyboardAvoidingView>
   );
@@ -280,7 +357,25 @@ const styles = StyleSheet.create({
   deletedText: { color: '#aaa', fontStyle: 'italic', fontSize: 14 },
   editedLabel: { color: '#aaa', fontSize: 11, marginTop: 2 },
   receiptRow: { alignItems: 'flex-end', marginTop: 2 },
-  reactionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4, maxWidth: '75%' },
+  editContainer: { gap: 8 },
+  editInput: {
+    color: '#fff',
+    fontSize: 15,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+    paddingBottom: 4,
+    minWidth: 160,
+  },
+  editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 16 },
+  editCancel: { color: 'rgba(255,255,255,0.6)', fontSize: 13 },
+  editConfirm: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  reactionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 4,
+    maxWidth: '75%',
+  },
   reactionRowMine: { alignSelf: 'flex-end' },
   reactionRowTheirs: { alignSelf: 'flex-start' },
   reactionPill: {
