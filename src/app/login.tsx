@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '@/firebase';
 
@@ -64,6 +64,7 @@ export default function Login() {
     setError(null);
     try {
       const { user } = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      await updateProfile(user, { displayName: displayName.trim() });
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
         displayName: displayName.trim(),

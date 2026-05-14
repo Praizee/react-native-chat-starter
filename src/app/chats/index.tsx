@@ -14,6 +14,7 @@ export default function ChatsList() {
 
   const { conversations, loading, error } = useConversationsStore();
   const currentUid = useAuthStore((s) => s.user?.uid);
+  const displayName = useAuthStore((s) => s.user?.displayName);
 
   const getOtherName = (participantNames?: Record<string, string>, participants?: string[]) => {
     if (!participantNames || !currentUid) return 'Chat';
@@ -27,7 +28,10 @@ export default function ChatsList() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.heading}>Chats</Text>
+        <View>
+          <Text style={styles.heading}>Chats</Text>
+          {displayName ? <Text style={styles.welcome}>Hey, {displayName} 👋</Text> : null}
+        </View>
         <TouchableOpacity
           onPress={async () => {
             await signOut(auth);
@@ -84,6 +88,7 @@ const styles = StyleSheet.create({
     borderColor: '#eee',
   },
   heading: { fontSize: 24, fontWeight: '700' },
+  welcome: { fontSize: 13, color: '#888', marginTop: 2 },
   signOut: { color: '#888', fontSize: 14 },
   row: {
     flexDirection: 'row',
