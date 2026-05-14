@@ -13,9 +13,9 @@ A full-featured real-time chat app built on the HNG Stage 5 starter (Expo SDK 55
 | **Emoji reactions** | Long-press any message → bottom sheet picker (6 emoji); pill counts below bubble; toggle off |
 | **Edit messages** | Long-press → Edit → inline text input in bubble → "Edited" label |
 | **Delete messages** | Delete for me (local only) or delete for everyone (server-enforced ownership) |
-| **Audio messages** | Hold mic button to record; release to upload and send; playback with 1× / 2× speed toggle and progress bar |
-| **Image messages** | Gallery picker; client-side compression (max 1200 px, 0.7 quality); tap thumbnail → fullscreen |
-| **Video messages** | Gallery picker; 50 MB guard; auto-generated thumbnail; tap → fullscreen with native controls |
+| **Audio messages** | Hold mic button to record; release to upload and send; playback with 1× / 2× speed toggle and progress bar *(requires Firebase Storage — Blaze plan)* |
+| **Image messages** | Gallery picker; client-side compression (max 1200 px, 0.7 quality); tap thumbnail → fullscreen *(requires Firebase Storage — Blaze plan)* |
+| **Video messages** | Gallery picker; 50 MB guard; auto-generated thumbnail; tap → fullscreen with native controls *(requires Firebase Storage — Blaze plan)* |
 | **In-chat search** | Header icon toggles search bar; debounced filter; matched substring highlighted in yellow; loading spinner + no-results state |
 | **Offline queue** | Text messages enqueued in AsyncStorage; delivered on reconnect / foreground |
 | **State management** | Zustand (authStore, chatStore, conversationsStore) — no setState pyramids |
@@ -39,7 +39,7 @@ Open on iOS Simulator, Android Emulator, or a development build on device.
 1. Create a project at <https://console.firebase.google.com>.
 2. Enable **Email/Password** in Authentication → Sign-in method.
 3. Create a **Firestore Database** — paste the contents of `firestore.rules` into the Rules tab.
-4. Create a **Storage bucket** and set its rules to:
+4. *(Optional — audio/image/video messages only)* Upgrade to the **Blaze plan**, create a **Storage bucket**, and set its rules to:
    ```
    rules_version = '2';
    service firebase.storage {
@@ -50,6 +50,7 @@ Open on iOS Simulator, Android Emulator, or a development build on device.
      }
    }
    ```
+   All text-based features (typing indicator, read receipts, reactions, edit/delete, search, offline queue) work on the free Spark plan with no Storage needed.
 5. In Project settings → Your apps, add a **Web app** and copy the config keys into `.env`.
 
 ## Firestore data model
