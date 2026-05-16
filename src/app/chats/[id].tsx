@@ -23,11 +23,9 @@ import {
   serverTimestamp,
   updateDoc,
 } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { AudioModule, RecordingPresets, useAudioRecorder } from 'expo-audio';
 import * as ImagePicker from 'expo-image-picker';
-import { getThumbnailAsync } from 'expo-video-thumbnails';
-import { auth, db, storage } from '@/firebase';
+import { auth, db } from '@/firebase';
 import { useMessages } from '@/hooks/useMessages';
 import { useChatStore } from '@/stores/chatStore';
 import { useConversationsStore } from '@/stores/conversationsStore';
@@ -50,6 +48,29 @@ import {
   QueuedMessage,
 } from '@/utils/offlineQueue';
 import { requestAudioPermission } from '@/utils/audioRecorder';
+
+const CLOUD = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME!;
+const PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
+
+async function uploadToCloudinary(uri: string, resourceType: 'image' | 'video') {
+  const form = new FormData();
+  form.append('file', {
+    uri,
+    type: resourceType === 'image' ? 'image/jpeg' : 'video/mp4',
+    name: 'upload',
+  } as any);
+  form.append('upload_preset', PRESET);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUD}/${resourceType}/upload`,
+    {
+      method: 'POST',
+      body: form,
+    },
+  );
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.secure_url as string;
+}
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -209,12 +230,7 @@ export default function ChatRoom() {
   const sendAudioMessage = async (localUri: string, duration: number) => {
     if (!currentUid || !id) return;
 
-    const msgRef = doc(collection(db, 'conversations', id, 'messages'));
-    const storageRef = ref(storage, `audio/${id}/${msgRef.id}.m4a`);
-
-    const blob = await fetch(localUri).then((r) => r.blob());
-    await uploadBytes(storageRef, blob, { contentType: 'audio/m4a' });
-    const mediaUrl = await getDownloadURL(storageRef);
+    const mediaUrl = await uploadToCloudinary(localUri, 'video');
 
     await addDoc(collection(db, 'conversations', id, 'messages'), {
       senderId: currentUid,
@@ -267,14 +283,9 @@ export default function ChatRoom() {
 
     setSendingMedia(true);
     try {
-      const msgRef = doc(collection(db, 'conversations', id, 'messages'));
-
       if (asset.type === 'image') {
         const compressed = await compressImage(asset.uri);
-        const blob = await fetch(compressed).then((r) => r.blob());
-        const storageRef = ref(storage, `images/${id}/${msgRef.id}.jpg`);
-        await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
-        const mediaUrl = await getDownloadURL(storageRef);
+        const mediaUrl = await uploadToCloudinary(compressed, 'image');
 
         await addDoc(collection(db, 'conversations', id, 'messages'), {
           senderId: currentUid,
@@ -288,25 +299,17 @@ export default function ChatRoom() {
           lastMessageAt: serverTimestamp(),
         });
       } else {
-        // Video — enforce 50 MB limit
         const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
         if (asset.fileSize && asset.fileSize > MAX_VIDEO_BYTES) {
           Alert.alert('File too large', 'Videos must be under 50 MB.');
           return;
         }
 
-        // Generate thumbnail
-        const { uri: thumbUri } = await getThumbnailAsync(asset.uri, { time: 0 });
-        const thumbBlob = await fetch(thumbUri).then((r) => r.blob());
-        const thumbRef = ref(storage, `videos/${id}/${msgRef.id}_thumb.jpg`);
-        await uploadBytes(thumbRef, thumbBlob, { contentType: 'image/jpeg' });
-        const mediaThumbnail = await getDownloadURL(thumbRef);
-
-        // Upload video
-        const videoBlob = await fetch(asset.uri).then((r) => r.blob());
-        const videoRef = ref(storage, `videos/${id}/${msgRef.id}.mp4`);
-        await uploadBytes(videoRef, videoBlob, { contentType: 'video/mp4' });
-        const mediaUrl = await getDownloadURL(videoRef);
+        const mediaUrl = await uploadToCloudinary(asset.uri, 'video');
+        // Cloudinary auto-generates a thumbnail at second 0
+        const mediaThumbnail = mediaUrl
+          .replace('/video/upload/', '/video/upload/so_0/')
+          .replace(/\.\w+$/, '.jpg');
 
         await addDoc(collection(db, 'conversations', id, 'messages'), {
           senderId: currentUid,
@@ -573,13 +576,14 @@ export default function ChatRoom() {
           {sendingMedia ? (
             <ActivityIndicator color="#222" size="small" />
           ) : (
-            <Text style={styles.attachIcon}>📎</Text>
+            <Ionicons name="attach" size={24} color="#888" />
           )}
         </TouchableOpacity>
 
         <TextInput
           style={styles.input}
           placeholder="Message"
+          placeholderTextColor="#999"
           value={text}
           onChangeText={onChangeText}
           multiline
@@ -589,7 +593,7 @@ export default function ChatRoom() {
 
         {text.trim() ? (
           <TouchableOpacity style={styles.sendButton} onPress={send}>
-            <Text style={styles.sendText}>Send</Text>
+            <Ionicons name="send" size={20} color="#fff" />
           </TouchableOpacity>
         ) : (
           <Pressable
@@ -600,7 +604,11 @@ export default function ChatRoom() {
             {sendingAudio ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Text style={styles.sendText}>{isRecording ? '⏹' : '🎤'}</Text>
+              <Ionicons
+                name={isRecording ? 'stop-circle' : 'mic'}
+                size={20}
+                color="#fff"
+              />
             )}
           </Pressable>
         )}
@@ -650,7 +658,7 @@ const styles = StyleSheet.create({
   headerAvatarText: { color: '#fff', fontWeight: '700' },
   headerName: { fontWeight: '600', fontSize: 17, flex: 1 },
   list: { padding: 12, gap: 6, paddingBottom: 8 },
-  bubble: { padding: 10, borderRadius: 16, maxWidth: '75%' },
+  bubble: { padding: 10, borderRadius: 16, maxWidth: '75%', minWidth: 80 },
   bubbleMine: { alignSelf: 'flex-end', backgroundColor: '#222' },
   bubbleTheirs: { alignSelf: 'flex-start', backgroundColor: '#f0f0f0' },
   textMine: { color: '#fff', fontSize: 15 },
@@ -708,7 +716,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  attachIcon: { fontSize: 22 },
   input: {
     flex: 1,
     borderWidth: 1,
@@ -717,18 +724,17 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     fontSize: 15,
     maxHeight: 100,
+    color: '#111',
   },
   sendButton: {
     backgroundColor: '#222',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    width: 42,
+    height: 42,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 20,
-    minWidth: 60,
+    borderRadius: 21,
   },
   sendButtonRecording: { backgroundColor: '#d32f2f' },
-  sendText: { color: '#fff', fontWeight: '600' },
   recordingBanner: {
     backgroundColor: '#d32f2f',
     paddingVertical: 6,

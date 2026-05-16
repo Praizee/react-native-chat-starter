@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Timestamp } from 'firebase/firestore';
 
 export type ReceiptStatus = 'sending' | 'sent' | 'seen';
@@ -9,23 +10,12 @@ interface Props {
 
 export function ReadReceipt({ status }: Props) {
   if (status === 'sending') {
-    return <Text style={styles.single}>✓</Text>;
+    return <Ionicons name="checkmark" size={13} color="#aaa" />;
   }
   if (status === 'sent') {
-    return (
-      <View style={styles.double}>
-        <Text style={styles.checkGrey}>✓</Text>
-        <Text style={[styles.checkGrey, styles.overlap]}>✓</Text>
-      </View>
-    );
+    return <Ionicons name="checkmark-done" size={13} color="#aaa" />;
   }
-  // seen
-  return (
-    <View style={styles.double}>
-      <Text style={styles.checkBlue}>✓</Text>
-      <Text style={[styles.checkBlue, styles.overlap]}>✓</Text>
-    </View>
-  );
+  return <Ionicons name="checkmark-done" size={13} color="#4fc3f7" />;
 }
 
 /**
@@ -48,10 +38,4 @@ export function getReceiptStatus(
   return seenByOther ? 'seen' : 'sent';
 }
 
-const styles = StyleSheet.create({
-  single: { color: '#aaa', fontSize: 11, marginTop: 2 },
-  double: { flexDirection: 'row', marginTop: 2 },
-  checkGrey: { color: '#aaa', fontSize: 11 },
-  checkBlue: { color: '#4fc3f7', fontSize: 11 },
-  overlap: { marginLeft: -4 },
-});
+const styles = StyleSheet.create({});

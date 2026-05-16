@@ -13,9 +13,9 @@ A full-featured real-time chat app built on the HNG Stage 5 starter (Expo SDK 55
 | **Emoji reactions** | Long-press any message → bottom sheet picker (6 emoji); pill counts below bubble; toggle off |
 | **Edit messages** | Long-press → Edit → inline text input in bubble → "Edited" label |
 | **Delete messages** | Delete for me (local only) or delete for everyone (server-enforced ownership) |
-| **Audio messages** | Hold mic button to record; release to upload and send; playback with 1× / 2× speed toggle and progress bar *(requires Firebase Storage — Blaze plan)* |
-| **Image messages** | Gallery picker; client-side compression (max 1200 px, 0.7 quality); tap thumbnail → fullscreen *(requires Firebase Storage — Blaze plan)* |
-| **Video messages** | Gallery picker; 50 MB guard; auto-generated thumbnail; tap → fullscreen with native controls *(requires Firebase Storage — Blaze plan)* |
+| **Audio messages** | Hold mic button to record; release to upload and send; playback with 1× / 2× speed toggle and progress bar |
+| **Image messages** | Gallery picker; client-side compression (max 1200 px, 0.7 quality); tap thumbnail → fullscreen |
+| **Video messages** | Gallery picker; 50 MB guard; Cloudinary auto-generated thumbnail; tap → fullscreen with native controls |
 | **In-chat search** | Header icon toggles search bar; debounced filter; matched substring highlighted in yellow; loading spinner + no-results state |
 | **Offline queue** | Text messages enqueued in AsyncStorage; delivered on reconnect / foreground |
 | **State management** | Zustand (authStore, chatStore, conversationsStore) — no setState pyramids |
@@ -26,7 +26,7 @@ A full-featured real-time chat app built on the HNG Stage 5 starter (Expo SDK 55
 ```bash
 pnpm install
 cp .env.example .env
-# fill in your Firebase config values in .env
+# fill in Firebase config values and Cloudinary credentials in .env
 pnpm start
 ```
 
@@ -39,25 +39,26 @@ Open on iOS Simulator, Android Emulator, or a development build on device.
 1. Create a project at <https://console.firebase.google.com>.
 2. Enable **Email/Password** in Authentication → Sign-in method.
 3. Create a **Firestore Database** — paste the contents of `firestore.rules` into the Rules tab.
-4. *(Optional — audio/image/video messages only)* Upgrade to the **Blaze plan**, create a **Storage bucket**, and set its rules to:
+4. In Project settings → Your apps, add a **Web app** and copy the config keys into `.env`.
+
+All features run on the free **Spark plan** — no Storage bucket or Blaze upgrade needed.
+
+## Cloudinary setup (media uploads)
+
+1. Create a free account at <https://cloudinary.com>.
+2. Copy your **Cloud name** from the dashboard homepage.
+3. Go to Settings → **Upload** → Upload presets → **Add upload preset** → set Signing Mode to **Unsigned** → save and copy the preset name.
+4. Add both to `.env`:
    ```
-   rules_version = '2';
-   service firebase.storage {
-     match /b/{bucket}/o {
-       match /{allPaths=**} {
-         allow read, write: if request.auth != null;
-       }
-     }
-   }
+   EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=your_cloud_name
+   EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET=your_preset_name
    ```
-   All text-based features (typing indicator, read receipts, reactions, edit/delete, search, offline queue) work on the free Spark plan with no Storage needed.
-5. In Project settings → Your apps, add a **Web app** and copy the config keys into `.env`.
 
 ## Firestore data model
 
 ```
 users/{uid}
-  displayName, email, createdAt
+  displayName, displayNameLower, email, createdAt
 
 conversations/{id}
   participants[]        — UIDs
