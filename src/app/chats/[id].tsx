@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import {
   addDoc,
   arrayUnion,
@@ -97,7 +98,7 @@ export default function ChatRoom() {
     return otherUid ? (conversation.participantNames[otherUid] ?? 'Chat') : 'Chat';
   })();
 
-  // ── Typing ────────────────────────────────────────────────────────────────
+  //  Typing ─
   const setTyping = useCallback(
     async (isTyping: boolean) => {
       if (!currentUid || !id) return;
@@ -115,23 +116,20 @@ export default function ChatRoom() {
     typingTimer = setTimeout(() => setTyping(false), 2000);
   };
 
-  // ── Send text ─────────────────────────────────────────────────────────────
-  const sendToFirestore = useCallback(
-    async (msg: QueuedMessage) => {
-      await addDoc(collection(db, 'conversations', msg.conversationId, 'messages'), {
-        senderId: msg.senderId,
-        type: 'text',
-        text: msg.text,
-        createdAt: serverTimestamp(),
-        readBy: { [msg.senderId]: serverTimestamp() },
-      });
-      await updateDoc(doc(db, 'conversations', msg.conversationId), {
-        lastMessage: msg.text,
-        lastMessageAt: serverTimestamp(),
-      });
-    },
-    [],
-  );
+  //  Send text
+  const sendToFirestore = useCallback(async (msg: QueuedMessage) => {
+    await addDoc(collection(db, 'conversations', msg.conversationId, 'messages'), {
+      senderId: msg.senderId,
+      type: 'text',
+      text: msg.text,
+      createdAt: serverTimestamp(),
+      readBy: { [msg.senderId]: serverTimestamp() },
+    });
+    await updateDoc(doc(db, 'conversations', msg.conversationId), {
+      lastMessage: msg.text,
+      lastMessageAt: serverTimestamp(),
+    });
+  }, []);
 
   const send = async () => {
     if (!currentUid || !id || !text.trim()) return;
@@ -157,7 +155,7 @@ export default function ChatRoom() {
     }
   };
 
-  // ── Flush queue on foreground ─────────────────────────────────────────────
+  //  Flush queue on foreground ─
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
@@ -169,7 +167,7 @@ export default function ChatRoom() {
     return () => sub.remove();
   }, [sendToFirestore]);
 
-  // ── Audio record ──────────────────────────────────────────────────────────
+  //  Audio record
   const onMicPressIn = async () => {
     const granted = await requestAudioPermission();
     if (!granted) {
@@ -177,7 +175,10 @@ export default function ChatRoom() {
       return;
     }
     try {
-      await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await AudioModule.setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
       await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
       audioRecorder.record();
       setIsRecording(true);
@@ -194,7 +195,7 @@ export default function ChatRoom() {
       await audioRecorder.stop();
       await AudioModule.setAudioModeAsync({ allowsRecording: false });
       const uri = audioRecorder.uri;
-      const duration = Math.round((audioRecorder.currentTime ?? 0));
+      const duration = Math.round(audioRecorder.currentTime ?? 0);
       if (!uri || duration < 1) return;
 
       await sendAudioMessage(uri, duration);
@@ -229,7 +230,7 @@ export default function ChatRoom() {
     });
   };
 
-  // ── Search ────────────────────────────────────────────────────────────────
+  //  Search ─
   const onSearchChange = (text: string) => {
     setSearchQuery(text);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -247,7 +248,7 @@ export default function ChatRoom() {
     setSearching(false);
   };
 
-  // ── Media pick & send ─────────────────────────────────────────────────────
+  //  Media pick & send ─
   const pickAndSendMedia = async () => {
     const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!granted) {
@@ -327,7 +328,7 @@ export default function ChatRoom() {
     }
   };
 
-  // ── Reactions ─────────────────────────────────────────────────────────────
+  //  Reactions
   const reactToMessage = async (msg: Message, emoji: string) => {
     setSheetTarget(null);
     if (!id || !currentUid) return;
@@ -346,7 +347,7 @@ export default function ChatRoom() {
     return Object.entries(counts);
   };
 
-  // ── Edit ──────────────────────────────────────────────────────────────────
+  //  Edit ─
   const startEdit = (msg: Message) => {
     setSheetTarget(null);
     setEditingId(msg.id);
@@ -368,7 +369,7 @@ export default function ChatRoom() {
     setEditText('');
   };
 
-  // ── Delete ────────────────────────────────────────────────────────────────
+  //  Delete ─
   const deleteForMe = async (msg: Message) => {
     setSheetTarget(null);
     if (!id || !currentUid) return;
@@ -385,7 +386,7 @@ export default function ChatRoom() {
     }).catch(() => {});
   };
 
-  // ── Visible messages ──────────────────────────────────────────────────────
+  //  Visible messages
   const activeQuery = searching ? '' : searchQuery.trim().toLowerCase();
 
   const visibleMessages = messages.filter((m) => {
@@ -397,7 +398,8 @@ export default function ChatRoom() {
   });
 
   if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={error} onRetry={() => router.replace(`/chats/${id}`)} />;
+  if (error)
+    return <ErrorState message={error} onRetry={() => router.replace(`/chats/${id}`)} />;
 
   return (
     <KeyboardAvoidingView
@@ -407,14 +409,14 @@ export default function ChatRoom() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.back}>←</Text>
+          <Ionicons name="arrow-back" size={24} color="#222" />
         </TouchableOpacity>
         <View style={styles.headerAvatar}>
           <Text style={styles.headerAvatarText}>{otherName[0]?.toUpperCase()}</Text>
         </View>
         <Text style={styles.headerName}>{otherName}</Text>
         <TouchableOpacity onPress={() => setSearchOpen((v) => !v)}>
-          <Text style={styles.searchIcon}>🔍</Text>
+          <Ionicons name="search" size={22} color="#222" />
         </TouchableOpacity>
       </View>
 
@@ -442,12 +444,8 @@ export default function ChatRoom() {
           data={visibleMessages}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
-          onContentSizeChange={() =>
-            flatListRef.current?.scrollToEnd({ animated: true })
-          }
-          onLayout={() =>
-            flatListRef.current?.scrollToEnd({ animated: false })
-          }
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
           renderItem={({ item }) => {
             const mine = item.senderId === currentUid;
             const deleted = item.deletedForEveryone;
@@ -464,7 +462,9 @@ export default function ChatRoom() {
                 onLongPress={() => !deleted && setSheetTarget(item)}
                 delayLongPress={300}
               >
-                <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+                <View
+                  style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}
+                >
                   {deleted ? (
                     <Text style={styles.deletedText}>This message was deleted</Text>
                   ) : isEditing ? (
@@ -491,35 +491,38 @@ export default function ChatRoom() {
                       duration={item.duration ?? 0}
                       isMine={mine}
                     />
-                  ) : (item.type === 'image' || item.type === 'video') && item.mediaUrl ? (
+                  ) : (item.type === 'image' || item.type === 'video') &&
+                    item.mediaUrl ? (
                     <MediaMessage
                       type={item.type}
                       mediaUrl={item.mediaUrl}
                       mediaThumbnail={item.mediaThumbnail}
                     />
-                  ) : (() => {
-                    const segments = activeQuery
-                      ? splitHighlight(item.text ?? '', activeQuery)
-                      : null;
-                    return (
-                      <>
-                        {segments ? (
-                          <Text style={mine ? styles.textMine : styles.textTheirs}>
-                            {segments[0]}
-                            <Text style={styles.highlight}>{segments[1]}</Text>
-                            {segments[2]}
-                          </Text>
-                        ) : (
-                          <Text style={mine ? styles.textMine : styles.textTheirs}>
-                            {item.text}
-                          </Text>
-                        )}
-                        {item.editedAt && (
-                          <Text style={styles.editedLabel}>Edited</Text>
-                        )}
-                      </>
-                    );
-                  })()}
+                  ) : (
+                    (() => {
+                      const segments = activeQuery
+                        ? splitHighlight(item.text ?? '', activeQuery)
+                        : null;
+                      return (
+                        <>
+                          {segments ? (
+                            <Text style={mine ? styles.textMine : styles.textTheirs}>
+                              {segments[0]}
+                              <Text style={styles.highlight}>{segments[1]}</Text>
+                              {segments[2]}
+                            </Text>
+                          ) : (
+                            <Text style={mine ? styles.textMine : styles.textTheirs}>
+                              {item.text}
+                            </Text>
+                          )}
+                          {item.editedAt && (
+                            <Text style={styles.editedLabel}>Edited</Text>
+                          )}
+                        </>
+                      );
+                    })()
+                  )}
                   {mine && receipt && !isEditing && (
                     <View style={styles.receiptRow}>
                       <ReadReceipt status={receipt} />
@@ -546,9 +549,7 @@ export default function ChatRoom() {
                         onPress={() => reactToMessage(item, emoji)}
                       >
                         <Text style={styles.reactionEmoji}>{emoji}</Text>
-                        {count > 1 && (
-                          <Text style={styles.reactionCount}>{count}</Text>
-                        )}
+                        {count > 1 && <Text style={styles.reactionCount}>{count}</Text>}
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -638,7 +639,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: '#eee',
   },
-  back: { fontSize: 22, color: '#222', paddingRight: 4 },
   headerAvatar: {
     width: 36,
     height: 36,
@@ -649,7 +649,6 @@ const styles = StyleSheet.create({
   },
   headerAvatarText: { color: '#fff', fontWeight: '700' },
   headerName: { fontWeight: '600', fontSize: 17, flex: 1 },
-  searchIcon: { fontSize: 20, paddingLeft: 4 },
   list: { padding: 12, gap: 6, paddingBottom: 8 },
   bubble: { padding: 10, borderRadius: 16, maxWidth: '75%' },
   bubbleMine: { alignSelf: 'flex-end', backgroundColor: '#222' },

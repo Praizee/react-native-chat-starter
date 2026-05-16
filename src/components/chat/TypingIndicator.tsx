@@ -30,9 +30,7 @@ function Dot({ delay }: { delay: number }) {
     return () => anim.stop();
   }, [delay, translateY]);
 
-  return (
-    <Animated.View style={[styles.dot, { transform: [{ translateY }] }]} />
-  );
+  return <Animated.View style={[styles.dot, { transform: [{ translateY }] }]} />;
 }
 
 export function TypingIndicator() {

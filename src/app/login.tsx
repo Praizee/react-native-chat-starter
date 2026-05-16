@@ -68,6 +68,7 @@ export default function Login() {
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
         displayName: displayName.trim(),
+        displayNameLower: displayName.trim().toLowerCase(),
         email: email.trim().toLowerCase(),
         createdAt: serverTimestamp(),
       });
@@ -82,7 +83,7 @@ export default function Login() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <Text style={styles.title}>ChatApp</Text>
       <Text style={styles.subtitle}>Sign in or create an account</Text>

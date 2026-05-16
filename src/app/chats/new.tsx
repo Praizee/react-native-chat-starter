@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import {
   addDoc,
   collection,
@@ -56,8 +57,8 @@ export default function NewChat() {
         getDocs(
           query(
             usersRef,
-            where('displayName', '>=', text.trim()),
-            where('displayName', '<=', text.trim() + ''),
+            where('displayNameLower', '>=', trimmed),
+            where('displayNameLower', '<=', trimmed + ''),
             limit(10),
           ),
         ),
@@ -129,7 +130,7 @@ export default function NewChat() {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.back}>← Back</Text>
+          <Ionicons name="arrow-back" size={24} color="#222" />
         </TouchableOpacity>
         <Text style={styles.title}>New Chat</Text>
       </View>
@@ -188,7 +189,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: '#eee',
   },
-  back: { fontSize: 16, color: '#222' },
   title: { fontSize: 18, fontWeight: '700' },
   input: {
     margin: 16,
